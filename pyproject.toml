@@ -1,0 +1,40 @@
+[project]
+name = "earn-e-p1"
+version = "0.1.0"
+description = "Async Python library for communicating with EARN-E P1 energy meters via UDP"
+readme = "README.md"
+authors = [
+    { name = "Michael Rademaker", email = "michael@appbriek.com" },
+]
+requires-python = ">=3.12"
+license = { text = "MIT" }
+keywords = ["earn-e", "p1", "energy", "smart-meter", "home-assistant", "udp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Home Automation",
+]
+
+[project.urls]
+Homepage = "https://github.com/Miggets7/earn-e-p1"
+Repository = "https://github.com/Miggets7/earn-e-p1"
+Issues = "https://github.com/Miggets7/earn-e-p1/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.0",
+    "pytest-cov>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
