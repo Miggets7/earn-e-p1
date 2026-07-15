@@ -125,8 +125,10 @@ class EarnEP1Listener:
     ) -> EarnEP1Device | None:
         """Validate a host using the active socket.
 
-        Temporarily accepts packets from the specified host.
-        Normal registered callbacks continue to fire.
+        Temporarily accepts packets from the specified host and waits for a
+        packet containing the serial before resolving, returning the device
+        with its serial populated. Returns None on timeout. Normal registered
+        callbacks continue to fire.
         """
         found: asyncio.Future[EarnEP1Device] = (
             asyncio.get_running_loop().create_future()
@@ -161,7 +163,11 @@ class EarnEP1Listener:
             v_host, v_device, v_future = self._validate_state
             if source_ip == v_host and not v_future.done():
                 _update_device(v_device, payload)
-                v_future.set_result(v_device)
+                # Only resolve once a packet carrying the serial has arrived.
+                # Partial packets (no serial) accumulate but must not resolve
+                # early, or callers get a device with serial=None.
+                if v_device.serial is not None:
+                    v_future.set_result(v_device)
 
 
 def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
@@ -199,8 +205,10 @@ async def validate(
 ) -> EarnEP1Device | None:
     """Validate that a specific host is an EARN-E device.
 
-    Returns as soon as the first valid packet arrives from the target host,
-    or None on timeout. Raises OSError if the port can't be bound.
+    Waits for a packet containing the serial from the target host and returns
+    the device with its serial populated, or None on timeout. Partial packets
+    (instantaneous values only, no serial) are accumulated but do not resolve
+    the validation. Raises OSError if the port can't be bound.
     """
     listener = EarnEP1Listener(port=port)
     await listener.start()
