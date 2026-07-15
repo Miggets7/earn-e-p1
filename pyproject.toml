@@ -1,6 +1,6 @@
 [project]
 name = "earn-e-p1"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async Python library for communicating with EARN-E P1 energy meters via UDP"
 readme = "README.md"
 authors = [

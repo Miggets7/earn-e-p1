@@ -392,3 +392,62 @@ async def test_standalone_validate_wrong_host_ignored(random_port: int) -> None:
     await task
 
     assert device is None
+
+
+async def test_standalone_validate_partial_then_full_returns_serial(
+    random_port: int,
+) -> None:
+    # A partial packet (no serial) arrives first, then a full packet with the
+    # serial. validate() must wait for the serial and not resolve early.
+    task = asyncio.create_task(
+        _send_packets(
+            [
+                b'{"power_delivered": 1.5}',
+                b'{"serial": "S1", "power_delivered": 1.5}',
+            ],
+            random_port,
+            delay=0.1,
+        )
+    )
+    device = await validate("127.0.0.1", timeout=2, port=random_port)
+    await task
+
+    assert device is not None
+    assert device.serial == "S1"
+
+
+async def test_standalone_validate_partial_only_times_out(
+    random_port: int,
+) -> None:
+    # Only partial packets (no serial) arrive from the target host, so
+    # validate() must time out and return None.
+    task = asyncio.create_task(
+        _send_packets(
+            [b'{"power_delivered": 1.5}'] * 3,
+            random_port,
+            delay=0.1,
+        )
+    )
+    device = await validate("127.0.0.1", timeout=0.5, port=random_port)
+    await task
+
+    assert device is None
+
+
+async def test_standalone_validate_full_first_returns_serial(
+    random_port: int,
+) -> None:
+    # A full packet with the serial arrives first: unchanged behavior, returns
+    # the device with the serial populated.
+    task = asyncio.create_task(
+        _send_packets(
+            [b'{"serial": "S1", "power_delivered": 1.5}'] * 3,
+            random_port,
+            delay=0.1,
+        )
+    )
+    device = await validate("127.0.0.1", timeout=2, port=random_port)
+    await task
+
+    assert device is not None
+    assert device.serial == "S1"
