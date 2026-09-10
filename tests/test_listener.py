@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from earn_e_p1.listener import EarnEP1Listener, discover, validate
+from earn_e_p1.models import PacketType
 
 
 @pytest.fixture
@@ -251,6 +252,104 @@ async def test_data_merging_across_packets(listener: EarnEP1Listener) -> None:
     assert device_ref.data["power_delivered"] == 1.5
     assert device_ref.data["voltage_l1"] == 230.0
     assert device_ref.data["energy_delivered_tariff1"] == 100.0
+
+
+# --- Packet type tracking ---
+
+
+async def test_realtime_packet_records_packet_type(
+    listener: EarnEP1Listener,
+) -> None:
+    received = asyncio.Event()
+    device_ref = None
+
+    def callback(device, raw):
+        nonlocal device_ref
+        device_ref = device
+        received.set()
+
+    listener.register("127.0.0.1", callback)
+    await listener.start()
+
+    await _send_packets(
+        [b'{"power_delivered": 1.5, "voltage_l1": 230.0}'],
+        listener.port,
+    )
+
+    async with asyncio.timeout(2):
+        await received.wait()
+
+    await listener.stop()
+
+    assert device_ref.seen_packet_types == {PacketType.REALTIME}
+    assert device_ref.data_complete is False
+
+
+async def test_realtime_then_telegram_completes_data(
+    listener: EarnEP1Listener,
+) -> None:
+    received = asyncio.Event()
+    call_count = 0
+    device_ref = None
+
+    def callback(device, raw):
+        nonlocal call_count, device_ref
+        call_count += 1
+        device_ref = device
+        if call_count == 2:
+            received.set()
+
+    listener.register("127.0.0.1", callback)
+    await listener.start()
+
+    await _send_packets(
+        [
+            b'{"power_delivered": 1.5, "voltage_l1": 230.0}',
+            b'{"serial": "S1", "energy_delivered_tariff1": 100.0}',
+        ],
+        listener.port,
+    )
+
+    async with asyncio.timeout(2):
+        await received.wait()
+
+    await listener.stop()
+
+    assert device_ref.seen_packet_types == {
+        PacketType.REALTIME,
+        PacketType.TELEGRAM,
+    }
+    assert device_ref.data_complete is True
+
+
+async def test_packet_without_witness_keys_records_no_type(
+    listener: EarnEP1Listener,
+) -> None:
+    # Identified by `serial`, but carries neither witness key, so it tells us
+    # nothing about which packet type it is.
+    received = asyncio.Event()
+    device_ref = None
+
+    def callback(device, raw):
+        nonlocal device_ref
+        device_ref = device
+        received.set()
+
+    listener.register("127.0.0.1", callback)
+    await listener.start()
+
+    await _send_packets(
+        [json.dumps({"serial": "S1", "model": "v1"}).encode()],
+        listener.port,
+    )
+
+    async with asyncio.timeout(2):
+        await received.wait()
+
+    await listener.stop()
+
+    assert device_ref.seen_packet_types == set()
+    assert device_ref.data_complete is False
 
 
 # --- Multiple devices ---
