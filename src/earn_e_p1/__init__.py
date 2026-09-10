@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from .const import DEFAULT_PORT
 from .listener import EarnEP1Listener, discover, validate
-from .models import EarnEP1Device
+from .models import EarnEP1Device, PacketType
 
 __all__ = [
     "DEFAULT_PORT",
     "EarnEP1Device",
     "EarnEP1Listener",
+    "PacketType",
     "discover",
     "validate",
 ]

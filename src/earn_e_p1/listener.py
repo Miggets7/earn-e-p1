@@ -8,13 +8,18 @@ import logging
 from typing import Any, Callable
 
 from .const import DEFAULT_PORT
-from .models import EarnEP1Device
+from .models import EarnEP1Device, PacketType
 
 _LOGGER = logging.getLogger(__name__)
 
 Callback = Callable[[EarnEP1Device, dict[str, Any]], None]
 
 _IDENTIFY_KEYS = {"power_delivered", "serial"}
+
+_PACKET_TYPE_KEYS: dict[PacketType, str] = {
+    PacketType.REALTIME: "power_delivered",
+    PacketType.TELEGRAM: "energy_delivered_tariff1",
+}
 
 
 class _EarnEP1Protocol(asyncio.DatagramProtocol):
@@ -172,6 +177,11 @@ class EarnEP1Listener:
 
 def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
     """Update device state from a parsed packet."""
+    device.seen_packet_types.update(
+        packet_type
+        for packet_type, key in _PACKET_TYPE_KEYS.items()
+        if key in payload
+    )
     if "serial" in payload and device.serial is None:
         device.serial = payload["serial"]
     if "model" in payload:

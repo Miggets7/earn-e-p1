@@ -90,16 +90,19 @@ class EarnEP1Device:
     model: str | None = None           # Device model
     sw_version: str | None = None      # Firmware version
     data: dict[str, Any] = field(...)  # Merged sensor data from all packets
+    seen_packet_types: set[PacketType] = field(...)  # Packet types seen so far
 ```
 
 The device sends two types of UDP broadcasts:
 
 | Type | Keys | Frequency |
 |------|------|-----------|
-| Realtime | `power_delivered`, `power_returned`, `voltage_l1`, `current_l1` | ~1s |
-| Full telegram | `energy_delivered_tariff1/2`, `energy_returned_tariff1/2`, `gas_delivered`, `wifiRSSI`, `serial`, `model`, `swVersion` | ~10s |
+| Realtime | `power_delivered`, `power_returned`, `voltage_l1`, `current_l1` (plus `voltage_l2/l3`, `current_l2/l3` on 3-phase meters) | ~1s |
+| Full telegram | `energy_delivered_tariff1/2`, `energy_returned_tariff1/2`, `gas_delivered`, `wifiRSSI`, `serial`, `model`, `swVersion` | ~1min |
 
 The library merges all packets into `device.data`, so it always contains the latest value for every key.
+
+Each type always carries every key the meter supports, so a 1-phase meter never sends `voltage_l2`/`voltage_l3` and an electricity-only meter never sends `gas_delivered`. `device.data_complete` becomes `True` once a packet of every type has been seen. From then on `device.data` holds the meter's complete key set, and any key still missing is one this meter does not report.
 
 ## License
 
