@@ -14,6 +14,31 @@ from earn_e_p1.listener import EarnEP1Listener, discover, validate
 from earn_e_p1.models import PacketType
 
 
+# --- Real captured telegrams ---
+#
+# The payloads below are verbatim captures from EARN-E hardware, kept exactly
+# as they came off the wire. They document the two-packet shape the listener
+# relies on: a realtime packet keyed by `power_delivered`, and a telegram
+# ("heartbeat") packet keyed by `energy_delivered_tariff1` that also carries
+# `gas_delivered` when a gas meter is attached. See `_PACKET_TYPE_KEYS` in
+# `earn_e_p1.listener`.
+
+# Meter B48A0AD0E0A6 — single phase, no gas meter.
+REAL_SINGLE_PHASE_REALTIME = b'{"timestamp":"2025-08-05T07:23:17Z","serial":"B48A0AD0E0A6","power_delivered":0.005,"power_returned":0,"voltage_l1":222,"current_l1":0}'
+REAL_SINGLE_PHASE_TELEGRAM = b'{"timestamp":"2025-08-05T08:45:02Z","swVersion":233,"serial":"B48A0AD0E0A6","equipment_id":"4530303638303031303132333638353230","model":"CTA5ZIV-METER","smr":22,"wifiRSSI":-55,"energy_delivered_tariff1":386.4289856,"energy_delivered_tariff2":0,"energy_returned_tariff1":1.700999975,"energy_returned_tariff2":0}'
+
+# Meter CCBA97F52084 — three phase, Belgian meter, no gas meter. The `model`
+# value contains a literal backslash, so the byte literal is raw to keep the
+# JSON escape (`\\`) intact on the wire.
+REAL_THREE_PHASE_REALTIME = b'{"timestamp":"2025-08-05T08:49:12Z","serial":"CCBA97F52084","power_delivered":0,"power_returned":0,"voltage_l1":223.3999939,"voltage_l2":223.5,"voltage_l3":223.3999939,"current_l1":0,"current_l2":0,"current_l3":0}'
+REAL_THREE_PHASE_TELEGRAM = rb'{"timestamp":"2025-08-05T08:07:01Z","swVersion":238,"serial":"CCBA97F52084","equipment_id":"3153414733313030323239333638","model":"FLU5\\253769484_A","smr":22,"wifiRSSI":-56,"energy_delivered_tariff1":363.2260132,"energy_delivered_tariff2":204.0099945,"energy_returned_tariff1":0.028000001,"energy_returned_tariff2":0.481000006}'
+
+# Meter EC64C9C0D674 — telegram from a meter with a gas meter attached. No
+# matching realtime capture exists for this meter, so it is tested on its own.
+# Newer firmware (swVersion 228) omits the `smr` key the 2025 captures carry.
+REAL_GAS_TELEGRAM = b'{"timestamp":"2026-02-19T08:17:34Z","swVersion":228,"serial":"EC64C9C0D674","equipment_id":"4530303839303031303232323237353234","model":"CTA5ZIV-METER","wifiRSSI":-61,"energy_delivered_tariff1":1006.36499,"energy_delivered_tariff2":1111.404053,"energy_returned_tariff1":0,"energy_returned_tariff2":0,"gas_delivered":782.9940186}'
+
+
 @pytest.fixture
 def listener() -> EarnEP1Listener:
     """Create a listener on a random free port."""
@@ -550,3 +575,141 @@ async def test_standalone_validate_full_first_returns_serial(
 
     assert device is not None
     assert device.serial == "S1"
+
+
+# --- Regression tests against real captured telegrams ---
+
+
+async def test_real_single_phase_no_gas(listener: EarnEP1Listener) -> None:
+    """Pin down a single-phase meter with no gas meter attached.
+
+    Real capture from meter B48A0AD0E0A6. The realtime packet reports only L1,
+    and neither packet carries `gas_delivered`, so those keys stay absent from
+    `data` even though the device is complete.
+    """
+    received = asyncio.Event()
+    call_count = 0
+    device_ref = None
+
+    def callback(device, raw):
+        nonlocal call_count, device_ref
+        call_count += 1
+        device_ref = device
+        if call_count == 2:
+            received.set()
+
+    listener.register("127.0.0.1", callback)
+    await listener.start()
+
+    await _send_packets(
+        [REAL_SINGLE_PHASE_REALTIME, REAL_SINGLE_PHASE_TELEGRAM],
+        listener.port,
+    )
+
+    async with asyncio.timeout(2):
+        await received.wait()
+
+    await listener.stop()
+
+    assert device_ref.seen_packet_types == {
+        PacketType.REALTIME,
+        PacketType.TELEGRAM,
+    }
+    assert device_ref.data_complete is True
+    assert device_ref.serial == "B48A0AD0E0A6"
+    assert "voltage_l1" in device_ref.data
+    assert "current_l1" in device_ref.data
+    for absent in (
+        "voltage_l2",
+        "voltage_l3",
+        "current_l2",
+        "current_l3",
+        "gas_delivered",
+    ):
+        assert absent not in device_ref.data
+
+
+async def test_real_three_phase_no_gas(listener: EarnEP1Listener) -> None:
+    """Pin down a three-phase Belgian meter with no gas meter attached.
+
+    Real capture from meter CCBA97F52084. All three phases are reported, gas
+    is not, and the Belgian `model` value carries a literal backslash that has
+    to survive JSON parsing.
+    """
+    received = asyncio.Event()
+    call_count = 0
+    device_ref = None
+
+    def callback(device, raw):
+        nonlocal call_count, device_ref
+        call_count += 1
+        device_ref = device
+        if call_count == 2:
+            received.set()
+
+    listener.register("127.0.0.1", callback)
+    await listener.start()
+
+    await _send_packets(
+        [REAL_THREE_PHASE_REALTIME, REAL_THREE_PHASE_TELEGRAM],
+        listener.port,
+    )
+
+    async with asyncio.timeout(2):
+        await received.wait()
+
+    await listener.stop()
+
+    assert device_ref.data_complete is True
+    assert device_ref.serial == "CCBA97F52084"
+    for phase_key in (
+        "voltage_l1",
+        "voltage_l2",
+        "voltage_l3",
+        "current_l1",
+        "current_l2",
+        "current_l3",
+    ):
+        assert phase_key in device_ref.data
+    assert "gas_delivered" not in device_ref.data
+    assert device_ref.model == r"FLU5\253769484_A"
+
+
+async def test_real_telegram_carries_gas(listener: EarnEP1Listener) -> None:
+    """Pin down that gas readings arrive in the telegram packet.
+
+    Real capture from meter EC64C9C0D674, which has a gas meter attached.
+    `gas_delivered` ships in the same packet as the four energy totals, which
+    is why `_PACKET_TYPE_KEYS` can key `PacketType.TELEGRAM` on
+    `energy_delivered_tariff1` and still expect gas to be there. No realtime
+    packet was captured for this meter, so `data_complete` stays False.
+    """
+    received = asyncio.Event()
+    device_ref = None
+
+    def callback(device, raw):
+        nonlocal device_ref
+        device_ref = device
+        received.set()
+
+    listener.register("127.0.0.1", callback)
+    await listener.start()
+
+    await _send_packets([REAL_GAS_TELEGRAM], listener.port)
+
+    async with asyncio.timeout(2):
+        await received.wait()
+
+    await listener.stop()
+
+    assert device_ref.seen_packet_types == {PacketType.TELEGRAM}
+    assert device_ref.data_complete is False
+    assert device_ref.serial == "EC64C9C0D674"
+    assert device_ref.data["gas_delivered"] == 782.9940186
+    for energy_key in (
+        "energy_delivered_tariff1",
+        "energy_delivered_tariff2",
+        "energy_returned_tariff1",
+        "energy_returned_tariff2",
+    ):
+        assert energy_key in device_ref.data
