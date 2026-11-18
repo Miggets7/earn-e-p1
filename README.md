@@ -87,7 +87,7 @@ The callback receives two arguments:
 @dataclass
 class EarnEP1Device:
     host: str                          # Device IP address
-    serial: str | None = None          # Serial number (set once from first full telegram)
+    serial: str | None = None          # Dongle serial (set once from the first packet)
     equipment_id: str | None = None    # Smart meter equipment ID, hex as sent (telegram only)
     model: str | None = None           # Device model
     sw_version: str | None = None      # Firmware version
@@ -99,7 +99,7 @@ The device sends two types of UDP broadcasts:
 
 | Type | Keys | Frequency |
 |------|------|-----------|
-| Realtime | `power_delivered`, `power_returned`, `voltage_l1`, `current_l1` (plus `voltage_l2/l3`, `current_l2/l3` on 3-phase meters) | ~1s |
+| Realtime | `serial`, `power_delivered`, `power_returned`, `voltage_l1`, `current_l1` (plus `voltage_l2/l3`, `current_l2/l3` on 3-phase meters) | ~1s |
 | Full telegram | `energy_delivered_tariff1/2`, `energy_returned_tariff1/2`, `gas_delivered`, `wifiRSSI`, `serial`, `equipment_id`, `model`, `swVersion` | ~1min |
 
 The library merges all packets into `device.data`, so it always contains the latest value for every key.
