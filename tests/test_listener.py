@@ -13,7 +13,6 @@ import pytest
 from earn_e_p1.listener import EarnEP1Listener, discover, validate
 from earn_e_p1.models import PacketType
 
-
 # --- Real captured telegrams ---
 #
 # The payloads below are verbatim captures from EARN-E hardware, kept exactly

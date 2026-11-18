@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .const import DEFAULT_PORT
 from .models import EarnEP1Device, PacketType
@@ -132,7 +133,7 @@ class EarnEP1Listener:
         await protocol.closed
         _LOGGER.debug("UDP listener stopped")
 
-    async def discover(self, timeout: int | float = 10) -> list[EarnEP1Device]:
+    async def discover(self, timeout: float = 10) -> list[EarnEP1Device]:
         """Discover devices using the active socket.
 
         Temporarily accepts packets from all IPs for the timeout duration,
@@ -151,9 +152,7 @@ class EarnEP1Listener:
             del self._discoveries[stopped]
         return list(discovered.values())
 
-    async def validate(
-        self, host: str, timeout: int | float = 65
-    ) -> EarnEP1Device | None:
+    async def validate(self, host: str, timeout: float = 65) -> EarnEP1Device | None:
         """Validate a host using the active socket.
 
         Temporarily accepts packets from the specified host and resolves once
@@ -206,9 +205,7 @@ class EarnEP1Listener:
 def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
     """Update device state from a parsed packet."""
     device.seen_packet_types.update(
-        packet_type
-        for packet_type, key in _PACKET_TYPE_KEYS.items()
-        if key in payload
+        packet_type for packet_type, key in _PACKET_TYPE_KEYS.items() if key in payload
     )
     if "serial" in payload and device.serial is None:
         device.serial = payload["serial"]
@@ -222,7 +219,7 @@ def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
 
 
 async def discover(
-    timeout: int | float = 10,
+    timeout: float = 10,
     port: int = DEFAULT_PORT,
 ) -> list[EarnEP1Device]:
     """Listen for EARN-E devices on the network.
@@ -240,7 +237,7 @@ async def discover(
 
 async def validate(
     host: str,
-    timeout: int | float = 65,
+    timeout: float = 65,
     port: int = DEFAULT_PORT,
 ) -> EarnEP1Device | None:
     """Validate that a specific host is an EARN-E device.
