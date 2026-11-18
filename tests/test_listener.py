@@ -451,7 +451,6 @@ async def test_instance_discover_while_running(
     assert callback.call_count > 0
 
 
-
 async def test_instance_discover_concurrent(listener: EarnEP1Listener) -> None:
     await listener.start()
 
@@ -464,6 +463,7 @@ async def test_instance_discover_concurrent(listener: EarnEP1Listener) -> None:
 
     assert [device.serial for device in first] == ["S1"]
     assert [device.serial for device in second] == ["S1"]
+
 
 # --- Instance validate() ---
 
@@ -485,7 +485,6 @@ async def test_instance_validate_while_running(
     assert device is not None
     assert device.serial == "S1"
     assert device.equipment_id == "E1"
-
 
 
 async def test_instance_validate_concurrent(listener: EarnEP1Listener) -> None:
@@ -528,6 +527,7 @@ async def test_instance_validate_outlives_other_validation(
     assert other is None
     assert device is not None
     assert device.equipment_id == "E1"
+
 
 # --- Standalone discover() ---
 
