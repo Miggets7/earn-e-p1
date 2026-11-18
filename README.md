@@ -58,9 +58,10 @@ Check if a specific IP is an EARN-E device:
 ```python
 from earn_e_p1 import validate
 
-device = await validate("192.168.1.100", timeout=10)
+# Waits for the ~1 min telegram, which carries the meter's equipment ID.
+device = await validate("192.168.1.100")
 if device:
-    print(f"Confirmed: {device.serial}")
+    print(f"Confirmed: {device.serial}, meter {device.equipment_id}")
 ```
 
 ### Discover/validate while a listener is running
@@ -72,7 +73,7 @@ If a listener is already active, use the instance methods to avoid port conflict
 devices = await listener.discover(timeout=10)
 
 # Validate using the active socket
-device = await listener.validate("192.168.1.100", timeout=10)
+device = await listener.validate("192.168.1.100")
 ```
 
 ## Data Model
@@ -87,6 +88,7 @@ The callback receives two arguments:
 class EarnEP1Device:
     host: str                          # Device IP address
     serial: str | None = None          # Serial number (set once from first full telegram)
+    equipment_id: str | None = None    # Smart meter equipment ID, hex as sent (telegram only)
     model: str | None = None           # Device model
     sw_version: str | None = None      # Firmware version
     data: dict[str, Any] = field(...)  # Merged sensor data from all packets
@@ -98,7 +100,7 @@ The device sends two types of UDP broadcasts:
 | Type | Keys | Frequency |
 |------|------|-----------|
 | Realtime | `power_delivered`, `power_returned`, `voltage_l1`, `current_l1` (plus `voltage_l2/l3`, `current_l2/l3` on 3-phase meters) | ~1s |
-| Full telegram | `energy_delivered_tariff1/2`, `energy_returned_tariff1/2`, `gas_delivered`, `wifiRSSI`, `serial`, `model`, `swVersion` | ~1min |
+| Full telegram | `energy_delivered_tariff1/2`, `energy_returned_tariff1/2`, `gas_delivered`, `wifiRSSI`, `serial`, `equipment_id`, `model`, `swVersion` | ~1min |
 
 The library merges all packets into `device.data`, so it always contains the latest value for every key.
 

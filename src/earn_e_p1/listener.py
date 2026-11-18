@@ -130,10 +130,10 @@ class EarnEP1Listener:
     ) -> EarnEP1Device | None:
         """Validate a host using the active socket.
 
-        Temporarily accepts packets from the specified host and waits for a
-        packet containing the serial before resolving, returning the device
-        with its serial populated. Returns None on timeout. Normal registered
-        callbacks continue to fire.
+        Temporarily accepts packets from the specified host and resolves once
+        the serial is known and a telegram packet has arrived, so the device
+        carries its serial and, if the meter reports one, its equipment ID.
+        Returns None on timeout. Normal registered callbacks continue to fire.
         """
         found: asyncio.Future[EarnEP1Device] = (
             asyncio.get_running_loop().create_future()
@@ -168,10 +168,13 @@ class EarnEP1Listener:
             v_host, v_device, v_future = self._validate_state
             if source_ip == v_host and not v_future.done():
                 _update_device(v_device, payload)
-                # Only resolve once a packet carrying the serial has arrived.
-                # Partial packets (no serial) accumulate but must not resolve
-                # early, or callers get a device with serial=None.
-                if v_device.serial is not None:
+                # Realtime packets carry the serial but not the equipment ID,
+                # which only arrives with the telegram. Resolving earlier would
+                # hand callers a device whose equipment ID is not known yet.
+                if (
+                    v_device.serial is not None
+                    and PacketType.TELEGRAM in v_device.seen_packet_types
+                ):
                     v_future.set_result(v_device)
 
 
@@ -184,6 +187,8 @@ def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
     )
     if "serial" in payload and device.serial is None:
         device.serial = payload["serial"]
+    if "equipment_id" in payload:
+        device.equipment_id = payload["equipment_id"]
     if "model" in payload:
         device.model = payload["model"]
     if "swVersion" in payload:
@@ -215,10 +220,10 @@ async def validate(
 ) -> EarnEP1Device | None:
     """Validate that a specific host is an EARN-E device.
 
-    Waits for a packet containing the serial from the target host and returns
-    the device with its serial populated, or None on timeout. Partial packets
-    (instantaneous values only, no serial) are accumulated but do not resolve
-    the validation. Raises OSError if the port can't be bound.
+    Waits until the target host has sent its serial and a telegram packet,
+    and returns the device with its serial and, if the meter reports one, its
+    equipment ID populated, or None on timeout. Realtime packets alone do not
+    resolve the validation. Raises OSError if the port can't be bound.
     """
     listener = EarnEP1Listener(port=port)
     await listener.start()

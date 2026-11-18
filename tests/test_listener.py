@@ -39,6 +39,12 @@ REAL_THREE_PHASE_TELEGRAM = rb'{"timestamp":"2025-08-05T08:07:01Z","swVersion":2
 REAL_GAS_TELEGRAM = b'{"timestamp":"2026-02-19T08:17:34Z","swVersion":228,"serial":"EC64C9C0D674","equipment_id":"4530303839303031303232323237353234","model":"CTA5ZIV-METER","wifiRSSI":-61,"energy_delivered_tariff1":1006.36499,"energy_delivered_tariff2":1111.404053,"energy_returned_tariff1":0,"energy_returned_tariff2":0,"gas_delivered":782.9940186}'
 
 
+REALTIME_PACKET = b'{"serial": "S1", "power_delivered": 1.5}'
+TELEGRAM_PACKET = (
+    b'{"serial": "S1", "equipment_id": "E1", "energy_delivered_tariff1": 100.0}'
+)
+
+
 @pytest.fixture
 def listener() -> EarnEP1Listener:
     """Create a listener on a random free port."""
@@ -443,10 +449,7 @@ async def test_instance_validate_while_running(
     await listener.start()
 
     task = asyncio.create_task(
-        _send_packets(
-            [b'{"serial": "S1", "power_delivered": 1.5}'] * 3,
-            listener.port,
-        )
+        _send_packets([REALTIME_PACKET, TELEGRAM_PACKET], listener.port)
     )
     device = await listener.validate("127.0.0.1", timeout=2)
     await task
@@ -454,6 +457,7 @@ async def test_instance_validate_while_running(
 
     assert device is not None
     assert device.serial == "S1"
+    assert device.equipment_id == "E1"
 
 
 # --- Standalone discover() ---
@@ -485,11 +489,7 @@ async def test_standalone_discover_no_devices(random_port: int) -> None:
 
 async def test_standalone_validate_success(random_port: int) -> None:
     task = asyncio.create_task(
-        _send_packets(
-            [b'{"serial": "S1", "power_delivered": 1.5}'] * 5,
-            random_port,
-            delay=0.1,
-        )
+        _send_packets([REALTIME_PACKET, TELEGRAM_PACKET], random_port, delay=0.1)
     )
     device = await validate("127.0.0.1", timeout=2, port=random_port)
     await task
@@ -497,6 +497,7 @@ async def test_standalone_validate_success(random_port: int) -> None:
     assert device is not None
     assert device.host == "127.0.0.1"
     assert device.serial == "S1"
+    assert device.equipment_id == "E1"
 
 
 async def test_standalone_validate_timeout(random_port: int) -> None:
@@ -525,10 +526,7 @@ async def test_standalone_validate_partial_then_full_returns_serial(
     # serial. validate() must wait for the serial and not resolve early.
     task = asyncio.create_task(
         _send_packets(
-            [
-                b'{"power_delivered": 1.5}',
-                b'{"serial": "S1", "power_delivered": 1.5}',
-            ],
+            [b'{"power_delivered": 1.5}', REALTIME_PACKET, TELEGRAM_PACKET],
             random_port,
             delay=0.1,
         )
@@ -558,14 +556,42 @@ async def test_standalone_validate_partial_only_times_out(
     assert device is None
 
 
-async def test_standalone_validate_full_first_returns_serial(
+async def test_standalone_validate_realtime_only_times_out(
     random_port: int,
 ) -> None:
-    # A full packet with the serial arrives first: unchanged behavior, returns
-    # the device with the serial populated.
+    # Realtime packets carry the serial but not the equipment ID, so without a
+    # telegram validate() must time out instead of resolving early.
+    task = asyncio.create_task(
+        _send_packets([REALTIME_PACKET] * 3, random_port, delay=0.1)
+    )
+    device = await validate("127.0.0.1", timeout=0.5, port=random_port)
+    await task
+
+    assert device is None
+
+
+async def test_standalone_validate_telegram_first_returns_device(
+    random_port: int,
+) -> None:
+    # The telegram carries the serial too, so it resolves on its own.
+    task = asyncio.create_task(
+        _send_packets([TELEGRAM_PACKET] * 3, random_port, delay=0.1)
+    )
+    device = await validate("127.0.0.1", timeout=2, port=random_port)
+    await task
+
+    assert device is not None
+    assert device.serial == "S1"
+    assert device.equipment_id == "E1"
+
+
+async def test_standalone_validate_telegram_without_equipment_id(
+    random_port: int,
+) -> None:
+    # A meter that does not report an equipment ID still validates.
     task = asyncio.create_task(
         _send_packets(
-            [b'{"serial": "S1", "power_delivered": 1.5}'] * 3,
+            [b'{"serial": "S1", "energy_delivered_tariff1": 100.0}'],
             random_port,
             delay=0.1,
         )
@@ -575,6 +601,38 @@ async def test_standalone_validate_full_first_returns_serial(
 
     assert device is not None
     assert device.serial == "S1"
+    assert device.equipment_id is None
+
+
+@pytest.mark.parametrize(
+    ("packets", "equipment_id"),
+    [
+        pytest.param(
+            [REAL_SINGLE_PHASE_REALTIME, REAL_SINGLE_PHASE_TELEGRAM],
+            "4530303638303031303132333638353230",
+            id="single_phase",
+        ),
+        pytest.param(
+            [REAL_THREE_PHASE_REALTIME, REAL_THREE_PHASE_TELEGRAM],
+            "3153414733313030323239333638",
+            id="three_phase_belgian",
+        ),
+        pytest.param(
+            [REAL_GAS_TELEGRAM],
+            "4530303839303031303232323237353234",
+            id="gas",
+        ),
+    ],
+)
+async def test_standalone_validate_real_telegrams(
+    random_port: int, packets: list[bytes], equipment_id: str
+) -> None:
+    task = asyncio.create_task(_send_packets(packets, random_port, delay=0.1))
+    device = await validate("127.0.0.1", timeout=2, port=random_port)
+    await task
+
+    assert device is not None
+    assert device.equipment_id == equipment_id
 
 
 # --- Regression tests against real captured telegrams ---
