@@ -66,7 +66,8 @@ if device:
 
 ### Discover/validate while a listener is running
 
-If a listener is already active, use the instance methods to avoid port conflicts:
+If a listener is already active, use the instance methods to avoid port conflicts.
+Several calls can run at the same time:
 
 ```python
 # Discover using the active socket

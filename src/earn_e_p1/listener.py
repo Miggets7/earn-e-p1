@@ -67,10 +67,11 @@ class EarnEP1Listener:
         self._devices: dict[str, tuple[EarnEP1Device, Callback]] = {}
         self._transport: asyncio.DatagramTransport | None = None
         self._protocol: _EarnEP1Protocol | None = None
-        self._discover_state: dict[str, EarnEP1Device] | None = None
-        self._validate_state: (
-            tuple[str, EarnEP1Device, asyncio.Future[EarnEP1Device]] | None
-        ) = None
+        # Pending discover() and validate() calls, so several can run at once.
+        self._discoveries: dict[object, dict[str, EarnEP1Device]] = {}
+        self._validations: dict[
+            asyncio.Future[EarnEP1Device], tuple[str, EarnEP1Device]
+        ] = {}
 
     @property
     def port(self) -> int:
@@ -128,14 +129,16 @@ class EarnEP1Listener:
         """Discover devices using the active socket.
 
         Temporarily accepts packets from all IPs for the timeout duration.
-        Normal registered callbacks continue to fire.
+        Normal registered callbacks continue to fire, and several calls can
+        run at the same time.
         """
+        token = object()
         discovered: dict[str, EarnEP1Device] = {}
-        self._discover_state = discovered
+        self._discoveries[token] = discovered
         try:
             await asyncio.sleep(timeout)
         finally:
-            self._discover_state = None
+            del self._discoveries[token]
         return list(discovered.values())
 
     async def validate(
@@ -146,20 +149,20 @@ class EarnEP1Listener:
         Temporarily accepts packets from the specified host and resolves once
         the serial is known and a telegram packet has arrived, so the device
         carries its serial and, if the meter reports one, its equipment ID.
-        Returns None on timeout. Normal registered callbacks continue to fire.
+        Returns None on timeout. Normal registered callbacks continue to fire,
+        and several calls can run at the same time.
         """
         found: asyncio.Future[EarnEP1Device] = (
             asyncio.get_running_loop().create_future()
         )
-        device = EarnEP1Device(host=host)
-        self._validate_state = (host, device, found)
+        self._validations[found] = (host, EarnEP1Device(host=host))
         try:
             async with asyncio.timeout(timeout):
                 return await found
         except TimeoutError:
             return None
         finally:
-            self._validate_state = None
+            del self._validations[found]
 
     def _handle_packet(self, source_ip: str, payload: dict[str, Any]) -> None:
         """Dispatch a parsed packet to registered devices and discover/validate."""
@@ -171,14 +174,13 @@ class EarnEP1Listener:
             callback(device, payload)
 
         # Instance discover — accept from any IP
-        if self._discover_state is not None:
-            if source_ip not in self._discover_state:
-                self._discover_state[source_ip] = EarnEP1Device(host=source_ip)
-            _update_device(self._discover_state[source_ip], payload)
+        for discovered in self._discoveries.values():
+            if source_ip not in discovered:
+                discovered[source_ip] = EarnEP1Device(host=source_ip)
+            _update_device(discovered[source_ip], payload)
 
         # Instance validate — accept from specific host
-        if self._validate_state is not None:
-            v_host, v_device, v_future = self._validate_state
+        for v_future, (v_host, v_device) in self._validations.items():
             if source_ip == v_host and not v_future.done():
                 _update_device(v_device, payload)
                 # Realtime packets carry the serial but not the equipment ID,
