@@ -66,7 +66,9 @@ if device:
 
 ### Discover/validate while a listener is running
 
-If a listener is already active, use the instance methods to avoid port conflicts:
+If a listener is already active, use the instance methods to avoid port conflicts.
+Several calls can run at the same time. `listener.stop()` ends pending calls
+right away, with the same result as a timeout:
 
 ```python
 # Discover using the active socket
@@ -105,6 +107,15 @@ The device sends two types of UDP broadcasts:
 The library merges all packets into `device.data`, so it always contains the latest value for every key.
 
 Each type always carries every key the meter supports, so a 1-phase meter never sends `voltage_l2`/`voltage_l3` and an electricity-only meter never sends `gas_delivered`. `device.data_complete` becomes `True` once a packet of every type has been seen. From then on `device.data` holds the meter's complete key set, and any key still missing is one this meter does not report.
+
+## Development
+
+```bash
+uv sync
+uv run prek install
+```
+
+The pre-commit hook runs `ruff check` and `ruff format` on every commit. Run `uv run pytest` for the tests.
 
 ## License
 

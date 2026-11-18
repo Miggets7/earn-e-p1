@@ -13,7 +13,6 @@ import pytest
 from earn_e_p1.listener import EarnEP1Listener, discover, validate
 from earn_e_p1.models import PacketType
 
-
 # --- Real captured telegrams ---
 #
 # The payloads below are verbatim captures from EARN-E hardware, kept exactly
@@ -451,6 +450,32 @@ async def test_instance_discover_while_running(
     assert callback.call_count > 0
 
 
+async def test_instance_discover_concurrent(listener: EarnEP1Listener) -> None:
+    await listener.start()
+
+    task = asyncio.create_task(_send_packets([REALTIME_PACKET] * 3, listener.port))
+    first, second = await asyncio.gather(
+        listener.discover(timeout=0.5), listener.discover(timeout=0.5)
+    )
+    await task
+    await listener.stop()
+
+    assert [device.serial for device in first] == ["S1"]
+    assert [device.serial for device in second] == ["S1"]
+
+
+async def test_instance_discover_ends_on_stop(listener: EarnEP1Listener) -> None:
+    await listener.start()
+
+    task = asyncio.create_task(listener.discover(timeout=10))
+    await _send_packets([REALTIME_PACKET], listener.port)
+    await listener.stop()
+
+    async with asyncio.timeout(1):
+        devices = await task
+    assert [device.serial for device in devices] == ["S1"]
+
+
 # --- Instance validate() ---
 
 
@@ -471,6 +496,59 @@ async def test_instance_validate_while_running(
     assert device is not None
     assert device.serial == "S1"
     assert device.equipment_id == "E1"
+
+
+async def test_instance_validate_concurrent(listener: EarnEP1Listener) -> None:
+    await listener.start()
+
+    task = asyncio.create_task(
+        _send_packets([REALTIME_PACKET, TELEGRAM_PACKET], listener.port)
+    )
+    first, second = await asyncio.gather(
+        listener.validate("127.0.0.1", timeout=2),
+        listener.validate("127.0.0.1", timeout=2),
+    )
+    await task
+    await listener.stop()
+
+    assert first is not None
+    assert first.equipment_id == "E1"
+    assert second is not None
+    assert second.equipment_id == "E1"
+
+
+async def test_instance_validate_outlives_other_validation(
+    listener: EarnEP1Listener,
+) -> None:
+    await listener.start()
+
+    async def _send_later() -> None:
+        await asyncio.sleep(0.3)
+        await _send_packets([REALTIME_PACKET, TELEGRAM_PACKET], listener.port)
+
+    task = asyncio.create_task(_send_later())
+    # The first validation times out before any packet arrives.
+    other, device = await asyncio.gather(
+        listener.validate("192.0.2.1", timeout=0.1),
+        listener.validate("127.0.0.1", timeout=2),
+    )
+    await task
+    await listener.stop()
+
+    assert other is None
+    assert device is not None
+    assert device.equipment_id == "E1"
+
+
+async def test_instance_validate_ends_on_stop(listener: EarnEP1Listener) -> None:
+    await listener.start()
+
+    task = asyncio.create_task(listener.validate("127.0.0.1", timeout=10))
+    await _send_packets([REALTIME_PACKET], listener.port)
+    await listener.stop()
+
+    async with asyncio.timeout(1):
+        assert await task is None
 
 
 # --- Standalone discover() ---

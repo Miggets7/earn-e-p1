@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .const import DEFAULT_PORT
 from .models import EarnEP1Device, PacketType
@@ -67,10 +68,12 @@ class EarnEP1Listener:
         self._devices: dict[str, tuple[EarnEP1Device, Callback]] = {}
         self._transport: asyncio.DatagramTransport | None = None
         self._protocol: _EarnEP1Protocol | None = None
-        self._discover_state: dict[str, EarnEP1Device] | None = None
-        self._validate_state: (
-            tuple[str, EarnEP1Device, asyncio.Future[EarnEP1Device]] | None
-        ) = None
+        # Pending discover() and validate() calls, keyed by the future that
+        # ends them, so several can run at once and stop() can end them all.
+        self._discoveries: dict[asyncio.Future[None], dict[str, EarnEP1Device]] = {}
+        self._validations: dict[
+            asyncio.Future[EarnEP1Device | None], tuple[str, EarnEP1Device]
+        ] = {}
 
     @property
     def port(self) -> int:
@@ -112,8 +115,14 @@ class EarnEP1Listener:
     async def stop(self) -> None:
         """Close the socket and stop listening.
 
-        Returns once the socket is closed, so the port can be bound again.
+        Pending discover() and validate() calls return right away, as if they
+        had timed out. Returns once the socket is closed, so the port can be
+        bound again.
         """
+        pending: list[asyncio.Future[Any]] = [*self._discoveries, *self._validations]
+        for future in pending:
+            if not future.done():
+                future.set_result(None)
         if self._transport is None or self._protocol is None:
             return
         protocol = self._protocol
@@ -124,42 +133,45 @@ class EarnEP1Listener:
         await protocol.closed
         _LOGGER.debug("UDP listener stopped")
 
-    async def discover(self, timeout: int | float = 10) -> list[EarnEP1Device]:
+    async def discover(self, timeout: float = 10) -> list[EarnEP1Device]:
         """Discover devices using the active socket.
 
-        Temporarily accepts packets from all IPs for the timeout duration.
-        Normal registered callbacks continue to fire.
+        Temporarily accepts packets from all IPs for the timeout duration,
+        or until stop() is called. Normal registered callbacks continue to
+        fire, and several calls can run at the same time.
         """
+        stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         discovered: dict[str, EarnEP1Device] = {}
-        self._discover_state = discovered
+        self._discoveries[stopped] = discovered
         try:
-            await asyncio.sleep(timeout)
+            async with asyncio.timeout(timeout):
+                await stopped
+        except TimeoutError:
+            pass
         finally:
-            self._discover_state = None
+            del self._discoveries[stopped]
         return list(discovered.values())
 
-    async def validate(
-        self, host: str, timeout: int | float = 65
-    ) -> EarnEP1Device | None:
+    async def validate(self, host: str, timeout: float = 65) -> EarnEP1Device | None:
         """Validate a host using the active socket.
 
         Temporarily accepts packets from the specified host and resolves once
         the serial is known and a telegram packet has arrived, so the device
         carries its serial and, if the meter reports one, its equipment ID.
-        Returns None on timeout. Normal registered callbacks continue to fire.
+        Returns None on timeout or when stop() is called. Normal registered
+        callbacks continue to fire, and several calls can run at the same time.
         """
-        found: asyncio.Future[EarnEP1Device] = (
+        found: asyncio.Future[EarnEP1Device | None] = (
             asyncio.get_running_loop().create_future()
         )
-        device = EarnEP1Device(host=host)
-        self._validate_state = (host, device, found)
+        self._validations[found] = (host, EarnEP1Device(host=host))
         try:
             async with asyncio.timeout(timeout):
                 return await found
         except TimeoutError:
             return None
         finally:
-            self._validate_state = None
+            del self._validations[found]
 
     def _handle_packet(self, source_ip: str, payload: dict[str, Any]) -> None:
         """Dispatch a parsed packet to registered devices and discover/validate."""
@@ -171,14 +183,13 @@ class EarnEP1Listener:
             callback(device, payload)
 
         # Instance discover — accept from any IP
-        if self._discover_state is not None:
-            if source_ip not in self._discover_state:
-                self._discover_state[source_ip] = EarnEP1Device(host=source_ip)
-            _update_device(self._discover_state[source_ip], payload)
+        for discovered in self._discoveries.values():
+            if source_ip not in discovered:
+                discovered[source_ip] = EarnEP1Device(host=source_ip)
+            _update_device(discovered[source_ip], payload)
 
         # Instance validate — accept from specific host
-        if self._validate_state is not None:
-            v_host, v_device, v_future = self._validate_state
+        for v_future, (v_host, v_device) in self._validations.items():
             if source_ip == v_host and not v_future.done():
                 _update_device(v_device, payload)
                 # Realtime packets carry the serial but not the equipment ID,
@@ -194,9 +205,7 @@ class EarnEP1Listener:
 def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
     """Update device state from a parsed packet."""
     device.seen_packet_types.update(
-        packet_type
-        for packet_type, key in _PACKET_TYPE_KEYS.items()
-        if key in payload
+        packet_type for packet_type, key in _PACKET_TYPE_KEYS.items() if key in payload
     )
     if "serial" in payload and device.serial is None:
         device.serial = payload["serial"]
@@ -210,7 +219,7 @@ def _update_device(device: EarnEP1Device, payload: dict[str, Any]) -> None:
 
 
 async def discover(
-    timeout: int | float = 10,
+    timeout: float = 10,
     port: int = DEFAULT_PORT,
 ) -> list[EarnEP1Device]:
     """Listen for EARN-E devices on the network.
@@ -228,7 +237,7 @@ async def discover(
 
 async def validate(
     host: str,
-    timeout: int | float = 65,
+    timeout: float = 65,
     port: int = DEFAULT_PORT,
 ) -> EarnEP1Device | None:
     """Validate that a specific host is an EARN-E device.
