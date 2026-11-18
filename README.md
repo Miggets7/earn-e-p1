@@ -67,7 +67,8 @@ if device:
 ### Discover/validate while a listener is running
 
 If a listener is already active, use the instance methods to avoid port conflicts.
-Several calls can run at the same time:
+Several calls can run at the same time. `listener.stop()` ends pending calls
+right away, with the same result as a timeout:
 
 ```python
 # Discover using the active socket

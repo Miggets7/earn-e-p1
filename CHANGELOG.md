@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced the first one's state, and whichever call finished first cleared it
   for the other. The other call then missed every packet and returned an empty
   list or `None` after its timeout.
+- `EarnEP1Listener.stop()` now ends pending `discover()` and `validate()`
+  calls right away. They return the same result as on a timeout: the devices
+  found so far, or `None`. Before, they kept waiting until their timeout ran out.
 
 ## 0.4.1 - 2026-11-18
 

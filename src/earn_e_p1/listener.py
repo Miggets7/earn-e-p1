@@ -67,10 +67,11 @@ class EarnEP1Listener:
         self._devices: dict[str, tuple[EarnEP1Device, Callback]] = {}
         self._transport: asyncio.DatagramTransport | None = None
         self._protocol: _EarnEP1Protocol | None = None
-        # Pending discover() and validate() calls, so several can run at once.
-        self._discoveries: dict[object, dict[str, EarnEP1Device]] = {}
+        # Pending discover() and validate() calls, keyed by the future that
+        # ends them, so several can run at once and stop() can end them all.
+        self._discoveries: dict[asyncio.Future[None], dict[str, EarnEP1Device]] = {}
         self._validations: dict[
-            asyncio.Future[EarnEP1Device], tuple[str, EarnEP1Device]
+            asyncio.Future[EarnEP1Device | None], tuple[str, EarnEP1Device]
         ] = {}
 
     @property
@@ -113,8 +114,14 @@ class EarnEP1Listener:
     async def stop(self) -> None:
         """Close the socket and stop listening.
 
-        Returns once the socket is closed, so the port can be bound again.
+        Pending discover() and validate() calls return right away, as if they
+        had timed out. Returns once the socket is closed, so the port can be
+        bound again.
         """
+        pending: list[asyncio.Future[Any]] = [*self._discoveries, *self._validations]
+        for future in pending:
+            if not future.done():
+                future.set_result(None)
         if self._transport is None or self._protocol is None:
             return
         protocol = self._protocol
@@ -128,17 +135,20 @@ class EarnEP1Listener:
     async def discover(self, timeout: int | float = 10) -> list[EarnEP1Device]:
         """Discover devices using the active socket.
 
-        Temporarily accepts packets from all IPs for the timeout duration.
-        Normal registered callbacks continue to fire, and several calls can
-        run at the same time.
+        Temporarily accepts packets from all IPs for the timeout duration,
+        or until stop() is called. Normal registered callbacks continue to
+        fire, and several calls can run at the same time.
         """
-        token = object()
+        stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         discovered: dict[str, EarnEP1Device] = {}
-        self._discoveries[token] = discovered
+        self._discoveries[stopped] = discovered
         try:
-            await asyncio.sleep(timeout)
+            async with asyncio.timeout(timeout):
+                await stopped
+        except TimeoutError:
+            pass
         finally:
-            del self._discoveries[token]
+            del self._discoveries[stopped]
         return list(discovered.values())
 
     async def validate(
@@ -149,10 +159,10 @@ class EarnEP1Listener:
         Temporarily accepts packets from the specified host and resolves once
         the serial is known and a telegram packet has arrived, so the device
         carries its serial and, if the meter reports one, its equipment ID.
-        Returns None on timeout. Normal registered callbacks continue to fire,
-        and several calls can run at the same time.
+        Returns None on timeout or when stop() is called. Normal registered
+        callbacks continue to fire, and several calls can run at the same time.
         """
-        found: asyncio.Future[EarnEP1Device] = (
+        found: asyncio.Future[EarnEP1Device | None] = (
             asyncio.get_running_loop().create_future()
         )
         self._validations[found] = (host, EarnEP1Device(host=host))
