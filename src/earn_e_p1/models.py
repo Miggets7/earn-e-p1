@@ -20,6 +20,7 @@ class EarnEP1Device:
 
     host: str
     serial: str | None = None
+    equipment_id: str | None = None
     model: str | None = None
     sw_version: str | None = None
     data: dict[str, Any] = field(default_factory=dict)
