@@ -27,6 +27,7 @@ class _EarnEP1Protocol(asyncio.DatagramProtocol):
 
     def __init__(self, listener: EarnEP1Listener) -> None:
         self._listener = listener
+        self.closed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Handle incoming UDP datagram."""
@@ -54,6 +55,8 @@ class _EarnEP1Protocol(asyncio.DatagramProtocol):
         """Handle connection lost."""
         if exc:
             _LOGGER.warning("UDP connection lost: %s", exc)
+        if not self.closed.done():
+            self.closed.set_result(None)
 
 
 class EarnEP1Listener:
@@ -63,6 +66,7 @@ class EarnEP1Listener:
         self._port = port
         self._devices: dict[str, tuple[EarnEP1Device, Callback]] = {}
         self._transport: asyncio.DatagramTransport | None = None
+        self._protocol: _EarnEP1Protocol | None = None
         self._discover_state: dict[str, EarnEP1Device] | None = None
         self._validate_state: (
             tuple[str, EarnEP1Device, asyncio.Future[EarnEP1Device]] | None
@@ -96,20 +100,29 @@ class EarnEP1Listener:
     async def start(self) -> None:
         """Open UDP socket and start listening."""
         loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
+        transport, protocol = await loop.create_datagram_endpoint(
             lambda: _EarnEP1Protocol(self),
             local_addr=("0.0.0.0", self._port),
             allow_broadcast=True,
         )
         self._transport = transport
+        self._protocol = protocol
         _LOGGER.debug("UDP listener started on port %s", self.port)
 
     async def stop(self) -> None:
-        """Close the socket and stop listening."""
-        if self._transport:
-            self._transport.close()
-            self._transport = None
-            _LOGGER.debug("UDP listener stopped")
+        """Close the socket and stop listening.
+
+        Returns once the socket is closed, so the port can be bound again.
+        """
+        if self._transport is None or self._protocol is None:
+            return
+        protocol = self._protocol
+        self._transport.close()
+        self._transport = None
+        self._protocol = None
+        # asyncio closes the socket on a later loop iteration.
+        await protocol.closed
+        _LOGGER.debug("UDP listener stopped")
 
     async def discover(self, timeout: int | float = 10) -> list[EarnEP1Device]:
         """Discover devices using the active socket.
