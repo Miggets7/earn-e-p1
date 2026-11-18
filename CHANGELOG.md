@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.1 - 2026-11-18
+
+### Fixed
+- `EarnEP1Listener.stop()` now returns only after the UDP socket is closed.
+  asyncio closes it on a later loop iteration, so a `start()` right after
+  `stop()` on the same port failed with `Address already in use`. Home
+  Assistant hit this on every config entry reload. The module-level
+  `validate()` and `discover()` stop their own listener the same way, so
+  binding the port right after they return failed too.
+
 ## 0.4.0 - 2026-11-18
 
 ### Added

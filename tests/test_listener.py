@@ -89,6 +89,19 @@ async def test_stop_when_not_started(listener: EarnEP1Listener) -> None:
     await listener.stop()  # should not raise
 
 
+async def test_restart_on_same_port_right_after_stop() -> None:
+    first = EarnEP1Listener(port=0)
+    await first.start()
+    port = first.port
+    await first.stop()
+
+    # No yield to the loop in between, as when Home Assistant reloads an entry.
+    second = EarnEP1Listener(port=port)
+    await second.start()
+    assert second.port == port
+    await second.stop()
+
+
 # --- Register / Unregister ---
 
 
