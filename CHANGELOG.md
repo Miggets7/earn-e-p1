@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EarnEP1Listener.stop()` now returns only after the UDP socket is closed.
   asyncio closes it on a later loop iteration, so a `start()` right after
   `stop()` on the same port failed with `Address already in use`. Home
-  Assistant hit this on every config entry reload.
+  Assistant hit this on every config entry reload. The module-level
+  `validate()` and `discover()` stop their own listener the same way, so
+  binding the port right after they return failed too.
 
 ## 0.4.0 - 2026-11-18
 
